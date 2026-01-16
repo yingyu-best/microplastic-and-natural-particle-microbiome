@@ -1,0 +1,69 @@
+#QC
+
+fastp -i ${sample}_1.fq.gz -I ${sample}_2.fq.gz -o $sample.adp.R1.fq.gz -O $sample.adp.R2.fq.gz -g -q 5 -u 50 -n 15 -l 150 --overlap_diff_limit 1 --overlap_diff_percent_limit 10
+
+kneaddata --i $sample.adp.R1.fq.gz --i $sample.adp.R2.fq.gz --trimmomatic trimmomatic-0.39-2 --output ./ --reference-db hg37 --threads 28
+
+fastq_pair $sample.kneaddata_paired_1.fastq $sample.kneaddata_paired_2.fastq
+
+
+#short reads annotation
+
+kraken2 --db k2_standard_20210517 --paired $sample.kneaddata_paired_1.fastq $sample.kneaddata_paired_2.fastq --use-names --report $sample.kraken_report --output $sample.kraken.out
+
+bracken -d k2_standard_20210517 -i $sample.kraken_report -o $sample.bracken_species.txt -w $sample.bracken.kreport -r 150 -l S
+
+
+#assembly
+
+metawrap assembly -1 $sample.kneaddata_paired_1.fastq -2 $sample.kneaddata_paired_2.fastq -t 30 -o $sample -m 1000
+
+
+#binning
+
+metawrap binning -o $sample -t 36 -a $sample/final_assembly.fasta --metabat2 --maxbin2 --concoct $sample.kneaddata_paired_1.fastq $sample.kneaddata_paired_2.fastq
+
+SemiBin single_easy_bin -i $sample/final_assembly.fasta -b $sample.mapped.sorted.bam -o $sample.sorted.bam --environment global
+
+
+#dereplication
+
+dRep dereplicate full.derep_90_5_99 -g *.fa -comp 90 -con 5 -sa 0.99
+
+
+#ORF
+
+prodigal -i $sample.fasta -o $sample.out -a $sample.proteins -d $sample.nucl -p meta -c
+
+
+#abundance
+
+coverm contig --threads 30 -1 $sample.fastqpair_1.fastq -2 $sample.fastqpair_2.fastq --reference $sample.nucl --methods rpkm -o $sample.rpkm.tsv
+
+
+#METABOLIC
+
+perl METABOLIC-G.pl -t 50 -m-cutoff 0.5 -in-gn /assembly/ -kofam-db full -o METABOLIC_contig_fasta
+
+
+#other functional annotation
+
+blastp -db PlasticDB(or_other_db) -query $sample.faa -out $sample.out -evalue 1e-10 -outfmt "6 qseqid sseqid pident length mismatch gapopen qstart qend sstart send evalue bitscore qcovs"
+
+
+#MAG classification and tree build
+
+gtdbtk classify_wf --genome_dir ./dereplicated_genomes --out_dir ./gtdb.full --cpus 64 --extension fa
+
+gtdbtk infer --msa_file ./gtdb.full/align/gtdbtk.ar53.user_msa.fasta.gz --out_dir ./gtdb.full/infer.ar --cpus 64
+gtdbtk infer --msa_file ./gtdb.full/align/gtdbtk.bac120.user_msa.fasta.gz --out_dir ./gtdb.full/infer.bacteria --cpus 64
+
+
+#metachip
+
+MetaCHIP BP -p MAG -r pcofg -t 12 -o MAG_combined_pcofg_HGTs -cov 75 -flk 10 -al 200 -pfr -ip 70 -ei 70
+
+
+#instrain
+
+#follow the tutorial (Tutorial #1) in https://instrain.readthedocs.io/en/latest/tutorial.html
